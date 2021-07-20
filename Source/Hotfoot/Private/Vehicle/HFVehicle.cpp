@@ -1,19 +1,61 @@
 // MIT LicenseCopyright (c) 2021 LinMAD
 
 #include "Vehicle/HFVehicle.h"
-#include "Components/InputComponent.h"
+#include "Engine.h"
 #include "Engine/World.h"
+#include "Components/InputComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "WheeledVehicleMovementComponent4W.h"
 
 AHFVehicle::AHFVehicle()
 {
+	SetReplicates(true);
+
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickGroup = TG_PostPhysics;
 
-	// Base skeletal mesh
-	VehicleMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("VehicleMesh"));
-	VehicleMesh->PrimaryComponentTick.TickGroup = PrimaryActorTick.TickGroup;
+	UWheeledVehicleMovementComponent4W* Vehicle4WComponent = Cast<UWheeledVehicleMovementComponent4W>(GetVehicleMovementComponent());
 
-	SetRootComponent(VehicleMesh);
+	// Tire Setup
+	Vehicle4WComponent->MinNormalizedTireLoad = 0.f;
+	Vehicle4WComponent->MinNormalizedTireLoadFiltered = 0.2f;
+	Vehicle4WComponent->MaxNormalizedTireLoad = 2.f;
+	Vehicle4WComponent->MaxNormalizedTireLoadFiltered = 2.f;
+
+	// Engine Torque Setup
+	Vehicle4WComponent->MaxEngineRPM = 6000.f;
+	Vehicle4WComponent->EngineSetup.TorqueCurve.GetRichCurve()->Reset();
+	Vehicle4WComponent->EngineSetup.TorqueCurve.GetRichCurve()->AddKey(0.f, 400.f);
+	Vehicle4WComponent->EngineSetup.TorqueCurve.GetRichCurve()->AddKey(1800.f, 500.f);
+	Vehicle4WComponent->EngineSetup.TorqueCurve.GetRichCurve()->AddKey(5800.f, 400.f);
+
+	// Steering Setup
+	Vehicle4WComponent->SteeringCurve.GetRichCurve()->Reset();
+	Vehicle4WComponent->SteeringCurve.GetRichCurve()->AddKey(0.f, 1.f);
+	Vehicle4WComponent->SteeringCurve.GetRichCurve()->AddKey(40.f, 0.7f);
+	Vehicle4WComponent->SteeringCurve.GetRichCurve()->AddKey(120.f, 0.6f);
+
+	// Differential Setup
+	Vehicle4WComponent->DifferentialSetup.DifferentialType = EVehicleDifferential4W::LimitedSlip_4W;
+	Vehicle4WComponent->DifferentialSetup.FrontRearSplit = 0.7f;
+
+	// Gearbox setup
+	Vehicle4WComponent->TransmissionSetup.bUseGearAutoBox = true;
+	Vehicle4WComponent->TransmissionSetup.GearSwitchTime = 0.1f;
+	Vehicle4WComponent->TransmissionSetup.GearAutoBoxLatency = 1.f;
+
+	//
+	// Camera
+	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("VehicleSpringArm"));
+	SpringArm->PrimaryComponentTick.TickGroup = PrimaryActorTick.TickGroup;
+	SpringArm->bUsePawnControlRotation = true;
+	SpringArm->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+
+	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("VehicleCamera"));
+	Camera->bUsePawnControlRotation = false;
+	Camera->FieldOfView = 90.f;
+	Camera->PrimaryComponentTick.TickGroup = PrimaryActorTick.TickGroup;
+	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
 }
 
 void AHFVehicle::BeginPlay()
@@ -24,81 +66,49 @@ void AHFVehicle::BeginPlay()
 void AHFVehicle::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	FVector Force = GetActorForwardVector() * VehicleData.MaxDrivingForce * VehicleData.Throttle;
-	Force += CalculateAirResistance();
-	Force += CalculateRollingResistance();
-
-	FVector Acceleration = Force / VehicleData.Mass;
-	VehicleData.Velocity = VehicleData.Velocity + Acceleration * DeltaTime;
-
-	UpdateRotation(DeltaTime);
-	UpdateLocation(DeltaTime);
 }
 
 void AHFVehicle::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	PlayerInputComponent->BindAxis("Throttle", this, &AHFVehicle::Throttle);
-	PlayerInputComponent->BindAxis("Steering", this, &AHFVehicle::Steering);
+	PlayerInputComponent->BindAxis("Throttle", this, &AHFVehicle::InputThrottle);
+	PlayerInputComponent->BindAxis("Steering", this, &AHFVehicle::InputSteering);
+
+	PlayerInputComponent->BindAction("Handbrake", IE_Pressed, this, &AHFVehicle::OnInputHandbrakePressed);
+	PlayerInputComponent->BindAction("Handbrake", IE_Released, this, &AHFVehicle::OnInputHandbrakeReleased);
 }
 
-#pragma region Vehicle dynamics
-
-FVector AHFVehicle::CalculateAirResistance()
+void AHFVehicle::InputLookUp(float Value)
 {
-	return -VehicleData.Velocity.GetSafeNormal() * VehicleData.Velocity.SizeSquared() * VehicleData.DragCoefficent;
+	if (Value != 0.f) 
+		AddControllerPitchInput(Value);
 }
 
-FVector AHFVehicle::CalculateRollingResistance()
+void AHFVehicle::InputLookRight(float Value)
 {
-	float AccelerationRelayedOnGravity = -this->GetWorld()->GetGravityZ() / 100;
-	float NormalForce = VehicleData.Mass * AccelerationRelayedOnGravity;
-
-	return -VehicleData.Velocity.GetSafeNormal() * VehicleData.RollingResistanceCoefficent * NormalForce;
+	if (Value != 0.f)
+		AddControllerYawInput(Value);
 }
 
-void AHFVehicle::UpdateRotation(float DeltaTime)
+void AHFVehicle::InputThrottle(float Value)
 {
-	float Location = FVector::DotProduct(GetActorForwardVector(), VehicleData.Velocity) * DeltaTime;
-	float RotationAngle = Location / VehicleData.MinTurningRadius * VehicleData.SteeringThrow;
-	FQuat RotationDelta(GetActorUpVector(), RotationAngle);
+	UE_LOG(LogTemp, Warning, TEXT("Throttle: %f"), Value);
 
-	VehicleData.Velocity = RotationDelta.RotateVector(VehicleData.Velocity);
-
-	AddActorWorldRotation(RotationDelta);
+	GetVehicleMovementComponent()->SetThrottleInput(Value);
 }
 
-void AHFVehicle::UpdateLocation(float DeltaTime)
+void AHFVehicle::InputSteering(float Value)
 {
-	// Calculate movement in centimeters per second
-	FVector Translation = VehicleData.Velocity * DeltaTime * 100;
-
-	FHitResult Hit;
-	AddActorWorldOffset(Translation, true, &Hit);
-
-	// There is object on front of the car
-	if (Hit.IsValidBlockingHit())
-	{
-		// TODO Apply collision effect
-		VehicleData.Velocity = FVector::ZeroVector;
-	}
+	GetVehicleMovementComponent()->SetSteeringInput(Value);
 }
 
-#pragma endregion Vehicle dynamics
-
-#pragma region Player input controlls
-
-void AHFVehicle::Throttle(float Value)
+void AHFVehicle::OnInputHandbrakePressed()
 {
-	VehicleData.Throttle = Value;
+	GetVehicleMovementComponent()->SetHandbrakeInput(true);
 }
 
-void AHFVehicle::Steering(float Value)
+void AHFVehicle::OnInputHandbrakeReleased()
 {
-	VehicleData.SteeringThrow = Value;
+	GetVehicleMovementComponent()->SetHandbrakeInput(false);
 }
-
-#pragma endregion Player input controlls
-

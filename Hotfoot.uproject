@@ -9,7 +9,8 @@
 			"Type": "Runtime",
 			"LoadingPhase": "Default",
 			"AdditionalDependencies": [
-				"Engine"
+				"Engine",
+				"PhysXVehicles"
 			]
 		}
 	],
@@ -31,6 +32,10 @@
 				"Win64",
 				"Android"
 			]
+		},
+		{
+			"Name": "PhysXVehicles",
+			"Enabled": true
 		}
 	],
 	"TargetPlatforms": [
