@@ -11,6 +11,8 @@ AHFVehicle::AHFVehicle()
 {
 	SetReplicates(true);
 
+	NetUpdateFrequency = 120.f;
+
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.TickGroup = TG_PostPhysics;
 
@@ -72,16 +74,24 @@ void AHFVehicle::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
+	//
+	// Camera
+	PlayerInputComponent->BindAxis("LookUp", this, &AHFVehicle::InputLookUp);
+	PlayerInputComponent->BindAxis("LookRight", this, &AHFVehicle::InputLookRight);
+
+	//
+	// Driving
 	PlayerInputComponent->BindAxis("Throttle", this, &AHFVehicle::InputThrottle);
 	PlayerInputComponent->BindAxis("Steering", this, &AHFVehicle::InputSteering);
-
 	PlayerInputComponent->BindAction("Handbrake", IE_Pressed, this, &AHFVehicle::OnInputHandbrakePressed);
 	PlayerInputComponent->BindAction("Handbrake", IE_Released, this, &AHFVehicle::OnInputHandbrakeReleased);
 }
 
 void AHFVehicle::InputLookUp(float Value)
 {
-	if (Value != 0.f) 
+	UE_LOG(LogTemp, Warning, TEXT("Looking up value: %f"), Value)
+
+	if (Value != 0.f)
 		AddControllerPitchInput(Value);
 }
 

@@ -10,5 +10,9 @@ UCLASS()
 class HOTFOOT_API AHFBaseGameMode : public AGameModeBase
 {
 	GENERATED_BODY()
-	
+
+protected:
+	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
+
+	virtual bool ShouldSpawnAtStartSpot(AController* Player) override;
 };
