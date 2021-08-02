@@ -24,7 +24,7 @@ private:
 	USpringArmComponent* SpringArm;
 
 	#pragma region Vehicle State Control
-
+	bool bIsDead;
 	#pragma endregion Vehicle State Control
 protected:
 	virtual void BeginPlay() override;
